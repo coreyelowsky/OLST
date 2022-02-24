@@ -29,6 +29,7 @@ import numpy as np
 import filecmp
 import pickle
 from pylab import *
+import Clusters
 
 class SWC_Analysis():
 
@@ -1141,7 +1142,7 @@ class SWC_Analysis():
 						ax.axes.yaxis.set_visible(False)
 						ax.axis('off')
 
-						ax.set_ylim([-.6,.6])
+						ax.set_ylim([-.6,.7])
 
 						# pia and white matter lines
 						#plt.axhline(y=.5, color='black', linestyle='-')
@@ -1208,27 +1209,30 @@ class SWC_Analysis():
 		structures = ['basal_apical_concat']
 		layers = self.layers
 
-		"""
+
+		swc_path = join('/data/elowsky/OLST/swc_analysis/analysis/', self.region, 'pia_white_matter_normalized/swcs/removed_nan_nodes/base/')
+		# load full list of features
+		feature_path = '/data/elowsky/OLST/swc_analysis/analysis/barrel_cortex/pia_white_matter_normalized/analysis/removed_nan_nodes/scaled_1000/soma_centered/morphometrics/layer_2/basal_apical_concat.txt'
+
 		significant_features = {
 			'barrel_cortex':[
-				'apical:N_branch:Total_Sum',
-				'basal:Length:Total_Sum',
-				'apical:Terminal_degree:Maximum',
-				'apical:N_bifs:Total_Sum',
-				'apical:Height:Total_Sum',
 				'apical:EucDistance:Maximum',
-				'basal:PathDistance:Maximum',
-				'basal:Contraction:Average',
+				'basal:Depth:Total_Sum',
+				'apical:Terminal_degree:Maximum',
+				'basal:Length:Total_Sum',
 				'apical:Branch_Order:Maximum',
+				'apical:Length:Total_Sum',
+				'apical:Height:Total_Sum',
+				'apical:N_stems:Total_Sum',
+				'basal:PathDistance:Average',
 				'apical:PathDistance:Average',
 				'apical:TerminalSegment:Total_Sum']
 		}
-		"""
+	
 
 
 
-
-
+		sig=set()
 
 		print()
 		print('Logistic Regression...')
@@ -1237,10 +1241,12 @@ class SWC_Analysis():
 		fig_size = (12,9)
 		point_size = 30
 		sig_size = 15
-		x_tick_font_size = 15
+		x_tick_font_size = 8
 
 		# iterate through layers
 		for layer in layers:
+
+			print(sig)
 
 			print('Layer:', layer)
 	
@@ -1299,7 +1305,7 @@ class SWC_Analysis():
 							continue
 
 						# load bootstrap coeffs
-						bootstrap_coeffs_path = join(log_reg_path, f'bootstrap_coeffs_{bootstrap_samples}_{bootstrap_method}.npy')
+						bootstrap_coeffs_path = join(log_reg_path, f'bootstrap_coeffs_{bootstrap_samples}.npy')
 						bootstrap_coeffs = np.load(bootstrap_coeffs_path)
 
 			
@@ -1339,8 +1345,7 @@ class SWC_Analysis():
 						coeffs = model.coef_
 
 
-					# load full list of features
-					feature_path = '/data/elowsky/OLST/swc_analysis/analysis/barrel_cortex/pia_white_matter_normalized/analysis/removed_nan_nodes/scaled_1000/soma_centered/morphometrics/layer_2/basal_apical_concat.txt'
+
 					full_features = np.genfromtxt(feature_path, dtype=str)[0,2:]
 
 					# if feature size create new 
@@ -1363,7 +1368,6 @@ class SWC_Analysis():
 				
 					
 					# create plot
-
 					fig, axs = plt.subplots(
 							len(model.classes_),
 							1, 
@@ -1393,13 +1397,61 @@ class SWC_Analysis():
 
 
 
-					# iterate through clusters
-					for i, cluster in enumerate(model.classes_):
+					# order clusters in same order as plots
+					# swcs in cluster lists come in pairs
+					# individual layers have order preserved 
+					# layer all is reordered based on height
+					cluster_plot_list = Clusters.clusters[self.region][layer]	
+					unique_clusters = model.classes_.copy()
 
+					cluster_order = []
+					
+					if layer == 'all':
+
+						# sort clusters by height
+						heights = []
+						for swc_id in cluster_plot_list:
+
+							swc_full_path = join(swc_path, swc_id + '.swc')
+							swc = SWC(swc_full_path, build_tree=False)
+							heights.append(-(swc.swc_array[:,3] - swc.swc_array[0,3]).min() )
+						heights = np.array(heights)
+						max_heights = [max(a,b) for a,b in zip(heights[::2],heights[1::2])]
+						indices = np.argsort(max_heights)
+					
+						# skip every other swc index by indices
+						cluster_plot_list = np.array(cluster_plot_list[::2])[indices]
+
+						#for each swc get whigh cluster its in
+						for swc_id in cluster_plot_list:
+							cluster_order.append(clusters[clusters[:,0] == swc_id][0,2])
+
+						# order clusters
+						cluster_order = np.array(cluster_order)
+						unique_clusters = unique_clusters[cluster_order]
+				
 	
+					else:		
+
+						# skip every other swc
+						cluster_plot_list = cluster_plot_list[::2]
+			
+						#for each swc get whigh cluster its in
+						for swc_id in cluster_plot_list:
+							cluster_order.append(clusters[clusters[:,0] == swc_id][0,2])
+
+						# order clusters
+						cluster_order = np.array(cluster_order)
+						unique_clusters = unique_clusters[cluster_order]
+
+
+					# iterate through clusters
+					for i, cluster in enumerate(unique_clusters):
+		
+						print(cluster)
 
 						# get coefficients for cluster
-						cluster_coeffs = coeffs[i]
+						cluster_coeffs = coeffs[cluster]
 
 
 						#axs[i].set_xlim([0, x_diff*len(feature_names) + x_pos])
@@ -1408,14 +1460,15 @@ class SWC_Analysis():
 						if layer == '6' and i < len(model.classes_)-1:
 							axs[i].xaxis.set_visible(False)
 						
+
 						for j, coeff in enumerate(cluster_coeffs):
 
 							if bootstrap:
-								p = p_values[i,j]
+								p = p_values[cluster,j]
 								p_string = utils.p_value_to_string(p)
 								if p_string != '':
 									print(f'Cluster: {cluster}, Feature: {feature_names[j]}, p: {p}') 
-
+									sig.add(feature_names[j])
 							if coeff == 0:	
 								axs[i].scatter(j, coeff,s=point_size,color='black',facecolors='none')
 							elif coeff > 0:
@@ -1434,7 +1487,7 @@ class SWC_Analysis():
 						# get accuracies (should all be 100%)
 						cluster_acc = model.score(X[y==cluster],y[y==cluster])
 						if cluster_acc != 1:
-							print('Error: Cluster Accuracy is not 100% is actually {np.round(cluster_acc*100,2)}')
+							print(f'Error: Cluster Accuracy is not 100% is actually {np.round(cluster_acc*100,2)}')
 
 						# axis options
 						axs[i].set_ylim([-5, 5])
@@ -1449,8 +1502,7 @@ class SWC_Analysis():
 
 
 					# plot options
-					#axs[0].set_title(f'{self.region} : Layer {layer} :  {structure} : c = {optimal_c}')
-					if layer == '6':
+					if layer in ['6','all']:
 						axs[-1].set_xticks(np.arange(len(feature_names)))
 						axs[-1].set_xticklabels(feature_names, rotation=90,fontsize=x_tick_font_size)
 						
@@ -1471,7 +1523,7 @@ class SWC_Analysis():
 							plt.savefig(
 								join(log_reg_path, f'{structure}.png'), 
 								dpi=300)
-
+				
 
 	def logistic_regression_find_optimal_c(self, 
 			X, 
@@ -1941,6 +1993,9 @@ class SWC_Analysis():
 	def plot_clusters_flexible(self, clusters):
 		
 
+		clusters = clusters[self.region]
+
+
 		# plot parameters
 		DOT_SIZE= 1.5
 		X_SPACING = .1
@@ -1949,6 +2004,8 @@ class SWC_Analysis():
 		cmap_b = mpl.cm.get_cmap(name='Dark2')
 		cmap_c = mpl.cm.get_cmap(name='Set1')
 		colors = cmap_a.colors + cmap_b.colors + cmap_c.colors
+
+
 		color_idx = 0
 
 
@@ -1973,70 +2030,83 @@ class SWC_Analysis():
 
 	
 		for layer, swc_ids in clusters.items():
-
-			# instaniate figure
-			fig = plt.figure(figsize=(18,10))
-			ax = plt.gca()
-			#ax.set_title(f'Layer: {layer}')
-			ax.axes.xaxis.set_visible(False)
-			ax.axes.yaxis.set_visible(False)
-			ax.axis('off')
-			ax.set_ylim([0,1])		
-
-			# pia and white matter lines
-			#plt.axhline(y=.5, color='black', linestyle='-')
-			#plt.axhline(y=-.5, color='black', linestyle='-')
-
-
-			# create layer boundaries
-			#for border_val in layer_borders[self.region].values():
-			#	plt.axhline(y=.5-border_val, color='black', linestyle='--', linewidth=1)
 			
 
-			# iterate through swcs to plot
-			x_pos = 0
-			for i, swc_id in enumerate(swc_ids):
+			if layer == 'all':
+				color_idx = 0
 
-				swc_full_path = join(swc_path, swc_id + '.swc')
+				# sort clusters by height
+				heights = []
+				for swc_id in swc_ids:
 
-				# load swc
-				swc = SWC(swc_full_path)
+					swc_full_path = join(swc_path, swc_id + '.swc')
+					swc = SWC(swc_full_path, build_tree=False)
+					heights.append(-(swc.swc_array[:,3] - swc.swc_array[0,3]).min() )
+				heights = np.array(heights)
+				max_heights = [max(a,b) for a,b in zip(heights[::2],heights[1::2])]
+	
+				indices = np.argsort(max_heights)*2
+				sorted_inds = []
+				for x in indices:
+					sorted_inds.append(x)
+					sorted_inds.append(x+1)
 
-				# extract only basal and apical
-				swc.extract_type_tree(['basal dendrite', 'apical dendrite'])
+				# sort ids
+				swc_ids = np.array(swc_ids)[sorted_inds]
 
-				# generate swc array
-				swc_array = swc.generate_swc_array()
-				basal_array = swc_array[swc_array[:,1] == 3, 2:5]
-				apical_array = swc_array[swc_array[:,1] == 4, 2:5]
+				# split into 4 groups
+				swc_id_groups = np.split(swc_ids, 4)
+			else:
+				swc_id_groups = [swc_ids]	
+	
+			for group_idx, swc_ids in enumerate(swc_id_groups):
+				
+				# instaniate figure
+				fig = plt.figure(figsize=(18,10))
+				ax = plt.gca()
 
-				basal_color = [*colors[color_idx],1]
-				apical_color = [*colors[color_idx],.1]
-				basal_color[0] *= .6
-				basal_color[1] *= .6
-				basal_color[2] *= .6
-
-
-
-				#plt.scatter(basal_array[:,0] + x_pos - swc_array[:,2].min() , -basal_array[:,1], color=basal_color, s=DOT_SIZE)
-				#plt.scatter(apical_array[:,0] + x_pos - swc_array[:,2].min() , -apical_array[:,1], color=apical_color, s=DOT_SIZE)
-				plt.scatter(basal_array[:,0] + x_pos - swc_array[:,2].min() , -basal_array[:,1]+basal_array[0,1]+.3, color=basal_color, s=DOT_SIZE)
-				plt.scatter(apical_array[:,0] + x_pos - swc_array[:,2].min() , -apical_array[:,1]+apical_array[0,1]+.3, color=apical_color, s=DOT_SIZE)
+				ax.axes.xaxis.set_visible(False)
+				ax.axes.yaxis.set_visible(False)
+				ax.axis('off')	
+				ax.set_ylim([-.6,.6])	
 
 
-				if i % 2 == 1:
-					color_idx += 1
+				# iterate through swcs to plot
+				x_pos = 0
+				for i, swc_id in enumerate(swc_ids):
+
+					swc_full_path = join(swc_path, swc_id + '.swc')
+
+					# load swc
+					swc = SWC(swc_full_path)
+
+					# extract only basal and apical
+					swc.extract_type_tree(['basal dendrite', 'apical dendrite'])
+
+					# generate swc array
+					swc_array = swc.generate_swc_array()
+					basal_array = swc_array[swc_array[:,1] == 3, 2:5]
+					apical_array = swc_array[swc_array[:,1] == 4, 2:5]
+
+					basal_color = [*colors[color_idx],1]
+					apical_color = [*colors[color_idx],.1]
+					basal_color[0] *= .6
+					basal_color[1] *= .6
+					basal_color[2] *= .6
+
+
+					plt.scatter(basal_array[:,0] + x_pos - swc_array[:,2].min() , -basal_array[:,1]+basal_array[0,1], color=basal_color, s=DOT_SIZE)
+					plt.scatter(apical_array[:,0] + x_pos - swc_array[:,2].min() , -apical_array[:,1]+apical_array[0,1], color=apical_color, s=DOT_SIZE)
+
+					if i % 2 == 1:
+						color_idx += 1
 					
+					# update x position
+					x_pos += swc_array[:,2].max() - swc_array[:,2].min() + X_SPACING
 
-
-				# update x position
-				x_pos += swc_array[:,2].max() - swc_array[:,2].min() + X_SPACING
-
-
-
-			out_path_full = join(out_path, f'layer_{layer}.png')
-			plt.savefig(out_path_full, dpi=300)
-			plt.close('all')
+				out_path_full = join(out_path, f'layer_{layer}_group_{group_idx}.png')
+				plt.savefig(out_path_full, dpi=300)
+				plt.close('all')
 
 
 	def soma_density_plots(self, cluster_path):
@@ -2138,8 +2208,10 @@ class SWC_Analysis():
 
 		"""
 
+		swc_path = join('/data/elowsky/OLST/swc_analysis/analysis/', self.region, 'pia_white_matter_normalized/swcs/removed_nan_nodes/base/')
+
 		feature_types = ['arbor_density', 'persistent_homology']
-		fig_size = (15,9)
+		fig_size = (20,6)
 		x_tick_font_size = 12
 		sig_font_size=15
 
@@ -2151,6 +2223,8 @@ class SWC_Analysis():
 		# iterate through feature types
 		for feature_type in feature_types:
 
+			print('Feature Type:', feature_type)
+
 			out_path_feature = join(out_path, feature_type)
 			if not exists(out_path_feature):
 				mkdir(out_path_feature)
@@ -2159,12 +2233,7 @@ class SWC_Analysis():
 			# iterate though layers
 			for layer in self.layers:
 
-				global_layer_data = []	
-				global_p_values = []
-				global_ax_labels = []
-				x_pos = 1
-				inter_intra_x_diff = .7
-				x_positions = []
+				print('Layer:', layer)
 
 				out_path_layer = join(out_path_feature, f'layer_{layer}')
 				if not exists(out_path_layer):
@@ -2195,26 +2264,81 @@ class SWC_Analysis():
 
 			
 				# array to hold all feature data
-				cluster_features_data_global = []
-			
+				unique_clusters = np.unique(clusters[:, 2]) 
+				
+				# order clusters in same order as plots
+				# swcs in cluster lists come in pairs
+				# individual layers have order preserved 
+				# layer all is reordered based on height
+				cluster_plot_list = Clusters.clusters[self.region][layer]
+
+				cluster_order = []
+
+				if layer == 'all':
+
+					# sort clusters by height
+					heights = []
+					for swc_id in cluster_plot_list:
+
+						swc_full_path = join(swc_path, swc_id + '.swc')
+						swc = SWC(swc_full_path, build_tree=False)
+						heights.append(-(swc.swc_array[:,3] - swc.swc_array[0,3]).min() )
+					heights = np.array(heights)
+					max_heights = [max(a,b) for a,b in zip(heights[::2],heights[1::2])]
+					indices = np.argsort(max_heights)
+					
+					# skip every other swc index by indices
+					cluster_plot_list = np.array(cluster_plot_list[::2])[indices]
+
+					#for each swc get whigh cluster its in
+					for swc_id in cluster_plot_list:
+						cluster_order.append(clusters[clusters[:,0] == swc_id][0,2])
+
+					# order clusters
+					cluster_order = np.array(cluster_order)
+					unique_clusters = unique_clusters[cluster_order]
+				
 	
+				else:		
+
+					# skip every other swc
+					cluster_plot_list = cluster_plot_list[::2]
+			
+					#for each swc get whigh cluster its in
+					for swc_id in cluster_plot_list:
+						cluster_order.append(clusters[clusters[:,0] == swc_id][0,2])
+
+					# order clusters
+					cluster_order = np.array(cluster_order)
+					unique_clusters = unique_clusters[cluster_order]
+
+
+				cluster_features_data_global = []
+				global_layer_data = []	
+				global_p_values = []
+				global_ax_labels = []
+				x_pos = 1
+				inter_intra_x_diff = .7
+				x_positions = []	
+
+				print(unique_clusters)
 				# iterate through clusters
-				for cluster_id in np.unique(clusters[:, 2]):
+				for cluster_id in unique_clusters:
 
 					# get all swcs names from cluster
 					cluster_swc_names = clusters[clusters[:,2] == cluster_id][:,0]
 					cluster_swc_names = ['_'.join(x.split('_')[1:]) for x in cluster_swc_names]
-				
+			
 					# get all feature data from cluster
 					swc_name_mask = np.in1d(feature_swc_names, cluster_swc_names)
 					cluster_feature_data = feature_data[swc_name_mask]
 
 					cluster_features_data_global.append(cluster_feature_data)
-					
+				
 					x_positions.append(x_pos)
 					x_positions.append(x_pos+inter_intra_x_diff)	
 					x_pos += 2
-						
+					
 
 				# for each cluster computer intra and inter pairwise distances
 				for i, data_i in enumerate(cluster_features_data_global):
@@ -2230,11 +2354,11 @@ class SWC_Analysis():
 
 						# if intra remove duplicate distances
 						if i == j:
-		
+	
 							# if intra then matrix will be square
 							# remove zeros on diagonal
 							# each distance is duplicated so just take every other
-						
+					
 							pairwise_distances.sort()
 							pairwise_distances = pairwise_distances[len(data_i):][::2]
 							data_dict['intra'] = pairwise_distances
@@ -2254,37 +2378,49 @@ class SWC_Analysis():
 					p_string = utils.p_value_to_string(p)
 					global_p_values.append(p_string)
 
-				# create box and whisker plots
-				fig, ax = plt.subplots(
-						figsize=fig_size)
 
-				ax.boxplot(global_layer_data, whis=float('infinity'), positions=x_positions)
-			
-				x_tick_positions = [(a + b) / 2 for a, b in zip(x_positions[::2], x_positions[1::2])]
-	
-				x_labels = np.arange(1,len(x_tick_positions)+1)
-				ax.set_xticks(x_tick_positions)
-	
-				ax.set_xticklabels(x_labels, fontsize=x_tick_font_size)
-
-				ax.yaxis.set_visible(False)
-
-			
-
-				
-
-				y_max = np.max([np.max(x) for x in global_layer_data])
-				ax.set_ylim([0,y_max+10])
-
-				# place p value strings
-				for i in range(0, len(global_p_values)*2, 2):
-					if global_p_values[i//2] == '':
-						global_p_values[i//2] = 'ns'
-					ax.text((x_positions[i] + x_positions[i+1])/2, y_max+3, global_p_values[i//2], size=sig_font_size, ha='center')
-				
-
-				plt.savefig(join(out_path_layer, f'all_clusters_{fig_size}'))
+				if layer == False:
+					global_layer_data_groups = np.split(np.array(global_layer_data), 4)
+					x_positions_groups = np.split(np.tile(x_positions[:len(x_positions)//4],4),4)
+					global_p_values = np.split(np.array(global_p_values),4)
 					
+				else:
+					global_layer_data_groups = [global_layer_data]
+					x_positions_groups = [x_positions]
+					global_p_values = [global_p_values]
+				
+
+				for g_idx, (g_layer_data, x_pos) in enumerate(zip(global_layer_data_groups, x_positions_groups)):
+
+					# create box and whisker plots
+					fig, ax = plt.subplots(
+							figsize=fig_size)
+
+					ax.boxplot(g_layer_data, whis=float('infinity'), positions=x_pos)
+	
+					x_tick_positions = [(a + b) / 2 for a, b in zip(x_pos[::2], x_pos[1::2])]
+
+					x_labels = np.arange(1,len(x_tick_positions)+1)
+					ax.set_xticks(x_tick_positions)
+
+					ax.set_xticklabels([])
+
+					ax.yaxis.set_visible(False)
+					#ax.xaxis.set_visible(False)
+
+	
+					y_max = np.max([np.max(x) for x in global_layer_data])
+					ax.set_ylim([0,y_max+10])
+
+					# place p value strings
+					for i in range(0, len(global_p_values[g_idx])*2, 2):
+						if global_p_values[g_idx][i//2] == '':
+							global_p_values[g_idx][i//2] = 'ns'
+						ax.text((x_pos[i] + x_pos[i+1])/2, y_max+3, global_p_values[g_idx][i//2], size=sig_font_size, ha='center')
+		
+
+					plt.savefig(join(out_path_layer, f'all_clusters_{fig_size}_{g_idx}'))
+		
 						
 
 				
@@ -2336,6 +2472,9 @@ if __name__ == '__main__':
 
 	#swc_analysis.concat_persistent_homology_vectors()
 
+
+	###########################################################
+
 	#swc_analysis.hierarchical_clustering(cut_method='fcluster')
 
 	#swc_analysis.create_2d_swc_plots()
@@ -2346,11 +2485,12 @@ if __name__ == '__main__':
 	#path_b = '/data/elowsky/OLST/swc_analysis/analysis/mop/pia_white_matter_normalized/swcs/removed_nan_nodes_old/soma_positioned/basal_apical/'
 	#SWC_Analysis.check_if_two_folders_are_same(path_a, path_b)
 
-	
+
+	"""
 	swc_analysis.logistic_regression(
 			bootstrap=True,
 			bootstrap_samples=10000,
-			generate_bootstrap=True,
+			generate_bootstrap=False,
 			bootstrap_method='individual_features',
 			bootstrap_layer='all', 
 			max_iter=1000, 
@@ -2360,38 +2500,32 @@ if __name__ == '__main__':
 			save_plot=True,
 			cluster_base_path = join('/data/palmer/consensus_clustering/output_swcs_removed/', region , 'morphometrics'),
 			save_model=False,
-			only_sig_features=True)
-
+			only_sig_features=False)
+	"""
 
 	#swc_analysis.cluster_morphometrics_statistics()
 	
-	#cluster_path = join('/data/palmer/consensus_clustering/output_no_angles/', region , 'morphometrics')
+	#cluster_path = join('/data/palmer/consensus_clustering/output_swcs_removed/', region , 'morphometrics')
 	#swc_analysis.box_plots(cluster_path, plot=False, save=True)
 
 	#data_type = 'morphometrics'
 	#cluster_path = join('/data/palmer/consensus_clustering/output_swcs_removed/', region , 'morphometrics')
+	#data_type = 'morphometrics'
 	#swc_analysis.plot_swc_clusters(cluster_path, data_type)
 
 	#swc_analysis.find_zero_morphometrics()
 
 	#swc_analysis.cross_layer_cluster_analysis()
 
-	
-	clusters = {
-		2: ['2_171012_69', '2_180614_83', '2_190327_116', '2_190416_134', '2_171012_95', '2_180614_25', '2_171012_92','2_190123_81', '2_180206_153', '2_190327_103', '2_171012_6','2_180606_52'],
-		4: ['4_171012_90', '4_180926_61', '4_180614_26', '4_190327_68', '4_171012_24', '4_180206_172', '4_180206_161', '4_180206_97', '4_180206_136', '4_180206_19'],
-		5: ['5_171012_54', '5_190327_95', '5_180206_160', '5_190123_89', '5_190123_78', '5_180206_83', '5_171012_45', '5_180614_39', '5_180606_60', '5_190327_42'],
-		6: ['6_180206_148', '6_180614_91', '6_171012_72', '6_180606_53', '6_180206_179', '6_171012_42', '6_180206_137', '6_180614_59']
-	}
 
-	#swc_analysis.plot_clusters_flexible(clusters)
+	#swc_analysis.plot_clusters_flexible(Clusters.clusters)
 
 
 	#cluster_path = join('/data/palmer/consensus_clustering/output_swcs_removed/', region , 'morphometrics')	
 	#swc_analysis.soma_density_plots(cluster_path)
 	
-	#cluster_path = join('/data/palmer/consensus_clustering/output_swcs_removed/', region , 'morphometrics')	
-	#swc_analysis.feature_type_pairwise_comparison(cluster_path)
+	cluster_path = join('/data/palmer/consensus_clustering/output_swcs_removed/', region , 'morphometrics')	
+	swc_analysis.feature_type_pairwise_comparison(cluster_path)
 	
 
 

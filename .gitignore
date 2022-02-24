@@ -1,4 +1,4 @@
 *.tif
 miscellaneous/
 presentation/
-
+**/__pycache__
