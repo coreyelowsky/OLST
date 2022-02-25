@@ -1201,13 +1201,16 @@ class SWC_Analysis():
 			save_plot=False,
 			cluster_base_path=None,
 			save_model=False,
-			only_sig_features=False):
+			only_sig_features=False,
+			layers_to_process=None):
 
 		"logistic regression"
 
 		base_path = join(self.analysis_path, 'morphometrics')
 		structures = ['basal_apical_concat']
-		layers = self.layers
+
+		if layers_to_process is None:
+			layers = self.layers
 
 
 		swc_path = join('/data/elowsky/OLST/swc_analysis/analysis/', self.region, 'pia_white_matter_normalized/swcs/removed_nan_nodes/base/')
@@ -1239,14 +1242,12 @@ class SWC_Analysis():
 		print()
 		
 		fig_size = (12,9)
-		point_size = 30
-		sig_size = 15
+		point_size = 15
+		sig_size = 7
 		x_tick_font_size = 8
 
 		# iterate through layers
 		for layer in layers:
-
-			print(sig)
 
 			print('Layer:', layer)
 	
@@ -1309,29 +1310,34 @@ class SWC_Analysis():
 						bootstrap_coeffs = np.load(bootstrap_coeffs_path)
 
 			
-					# find highest c value that still gives 100% accuraacy
-					# this will ensure strongest regulariszation that still has 100% accuracy
-					optimal_c = self.logistic_regression_find_optimal_c(X, y, max_iter=max_iter, c_precision=c_precision)
-					print(f'\t\t\t\tC: {optimal_c}')
+					# load model if exists
+					model_path = join(log_reg_path, 'log_reg_model.sav')
+					if exists(model_path):
+						model = pickle.load(open(model_path, 'rb'))
+					else:
 
-					# train logistic regression
-					model = LogisticRegression(
-							penalty='l1',
-							solver='liblinear',
-							multi_class='auto',
-							C=optimal_c,
-							max_iter=max_iter)
+						# find highest c value that still gives 100% accuraacy
+						# this will ensure strongest regulariszation that still has 100% accuracy
+						optimal_c = self.logistic_regression_find_optimal_c(X, y, max_iter=max_iter, c_precision=c_precision)
+						print(f'\t\t\t\tC: {optimal_c}')
 
-					# fit model
-					model.fit(X,y)
+						# train logistic regression
+						model = LogisticRegression(
+								penalty='l1',
+								solver='liblinear',
+								multi_class='auto',
+								C=optimal_c,
+								max_iter=max_iter)
 
-					# get accuracy
-					accuracy = model.score(X,y)
-					print(f'\t\t\t\tAccuracy: {accuracy}')
+						# fit model
+						model.fit(X,y)
 
-					if save_model:
-						model_path = join(log_reg_path, 'log_reg_model.sav')
-						pickle.dump(model, open(model_path,'wb'))
+						# get accuracy
+						accuracy = model.score(X,y)
+						print(f'\t\t\t\tAccuracy: {accuracy}')
+
+						if save_model:
+							pickle.dump(model, open(model_path,'wb'))
 
 			
 					# remove all features where all models have zero coefficients
@@ -1445,27 +1451,30 @@ class SWC_Analysis():
 						unique_clusters = unique_clusters[cluster_order]
 
 
+				
+
+					p_strings = []
+
 					# iterate through clusters
 					for i, cluster in enumerate(unique_clusters):
-		
-						print(cluster)
+	
 
 						# get coefficients for cluster
 						cluster_coeffs = coeffs[cluster]
 
 
-						#axs[i].set_xlim([0, x_diff*len(feature_names) + x_pos])
 						axs[i].axhline(y=0, c="grey",linewidth=0.5, alpha=.4)
 
 						if layer == '6' and i < len(model.classes_)-1:
 							axs[i].xaxis.set_visible(False)
 						
-
+						p_strings_row = []
 						for j, coeff in enumerate(cluster_coeffs):
 
 							if bootstrap:
 								p = p_values[cluster,j]
 								p_string = utils.p_value_to_string(p)
+								p_strings_row.append(p_string)
 								if p_string != '':
 									print(f'Cluster: {cluster}, Feature: {feature_names[j]}, p: {p}') 
 									sig.add(feature_names[j])
@@ -1480,6 +1489,8 @@ class SWC_Analysis():
 								if bootstrap:
 									axs[i].text(j, coeff + 1, p_string, size=sig_size, ha='center')
 
+						p_strings.append(p_strings_row)
+
 						# find coeff with maximum magnitude
 						max_coeff = max(abs(cluster_coeffs))
 
@@ -1490,7 +1501,7 @@ class SWC_Analysis():
 							print(f'Error: Cluster Accuracy is not 100% is actually {np.round(cluster_acc*100,2)}')
 
 						# axis options
-						axs[i].set_ylim([-5, 5])
+						axs[i].set_ylim([-10, 10])
 						axs[i].set_xticks([])
 						axs[i].set_yticklabels([])
 						axs[i].set_yticks([])
@@ -1501,14 +1512,24 @@ class SWC_Analysis():
 						axs[i].tick_params(axis='y', which='major', labelsize=5)
 
 
+					f_type_map = {'maximum': 'max', 'total_sum':'sum', 'average':'avg'}
+					s_type_map = {'apical':'api','basal':'bas'}
+					# modify feature names
+					for i, feature_name in enumerate(feature_names):
+						parts = feature_name.lower().split(':')
+						
+						feature_name_modified = '_'.join([s_type_map[parts[0]],parts[1],f_type_map[parts[2]]])
+						
+						feature_names[i] = feature_name_modified
+
 					# plot options
-					if layer in ['6','all']:
+					if layer in ['6', 'all']:
 						axs[-1].set_xticks(np.arange(len(feature_names)))
 						axs[-1].set_xticklabels(feature_names, rotation=90,fontsize=x_tick_font_size)
 						
 
 						# add space below 
-						fig.subplots_adjust(bottom=0.5)
+						fig.subplots_adjust(bottom=0.2)
 
 					# show plot
 					if plot:
@@ -1523,6 +1544,25 @@ class SWC_Analysis():
 							plt.savefig(
 								join(log_reg_path, f'{structure}.png'), 
 								dpi=300)
+
+
+					# heatmap
+
+					# create plot
+					fig, ax = plt.subplots(figsize=fig_size)
+				
+					coeffs = coeffs[unique_clusters]
+					cmap = sns.diverging_palette(240, 10, s=100, as_cmap=True)
+					ax = sns.heatmap(coeffs.T, cbar=False, square=True, cmap=cmap, annot=np.array(p_strings).T, fmt="", annot_kws={'fontsize':5})
+
+					ax.set_xticklabels(np.arange(1,len(unique_clusters)+1))
+					ax.set_yticklabels(feature_names, rotation=0)
+
+					if save_plot:
+						plt.savefig(
+							join(log_reg_path, f'{structure}_heatmap.png'), 
+							dpi=300)
+	
 				
 
 	def logistic_regression_find_optimal_c(self, 
@@ -1872,7 +1912,7 @@ class SWC_Analysis():
 		for region in regions:
 			region_path = join(base_path, region, 'pia_white_matter_normalized/analysis/removed_nan_nodes/scaled_1000/soma_centered/morphometrics/layer_all/basal_apical_concat.txt')
 
-			data, feature_names = self.load_morphometrics(region_path)
+			data, feature_names = self.load_feature_data(region_path)
 			
 			zero_features = feature_names[(data == 0).any(axis=0)]
 			swc_counts = (data == 0).sum(axis=0)[(data == 0).any(axis=0)]
@@ -1884,13 +1924,14 @@ class SWC_Analysis():
 					feature_dict[zero_feature]  = swc_count
 		pprint.pprint(feature_dict)
 			
-	def load_morphometrics(self, path):
+	def load_feature_data(self, path):
 
 		morphometrics = np.genfromtxt(path, delimiter=' ', dtype=object)
+		swc_names = morphometrics[1:,0].astype(str)
 		feature_names = morphometrics[0,2:].astype(str)
 		data = morphometrics[1:, 2:].astype(np.float64)
 		
-		return data, feature_names
+		return data, feature_names, swc_names
 
 
 	def cross_layer_cluster_analysis(self, cluster_path):
@@ -2208,12 +2249,12 @@ class SWC_Analysis():
 
 		"""
 
-		swc_path = join('/data/elowsky/OLST/swc_analysis/analysis/', self.region, 'pia_white_matter_normalized/swcs/removed_nan_nodes/base/')
-
+		swc_path = join('/data/elowsky/OLST/swc_analysis/analysis/', self.region, self.swc_type, 'swcs', self.remove_nan_type, 'base')
 		feature_types = ['arbor_density', 'persistent_homology']
 		fig_size = (20,6)
 		x_tick_font_size = 12
-		sig_font_size=15
+		sig_font_size = 15
+		inter_intra_x_diff = .7
 
 		# output path
 		out_path = join(self.analysis_path, 'cross_feature_comparison')
@@ -2246,10 +2287,8 @@ class SWC_Analysis():
 						f'layer_{layer}',
 						'pca',
 						'basal_apical_concat.txt')
-				feature_data = np.genfromtxt(feature_data_path, dtype=object)
-				feature_data = feature_data[1:]
-				feature_swc_names = feature_data[:,0].astype(str)
-				feature_data = feature_data[:,2:].astype(np.float64)
+			
+				feature_data, feature_names, feature_swc_names = self.load_feature_data(feature_data_path)
 
 
 				# load clusters
@@ -2318,10 +2357,9 @@ class SWC_Analysis():
 				global_p_values = []
 				global_ax_labels = []
 				x_pos = 1
-				inter_intra_x_diff = .7
 				x_positions = []	
 
-				print(unique_clusters)
+
 				# iterate through clusters
 				for cluster_id in unique_clusters:
 
@@ -2378,48 +2416,36 @@ class SWC_Analysis():
 					p_string = utils.p_value_to_string(p)
 					global_p_values.append(p_string)
 
+			
+				# create box and whisker plots
+				fig, ax = plt.subplots(figsize=fig_size)
 
-				if layer == False:
-					global_layer_data_groups = np.split(np.array(global_layer_data), 4)
-					x_positions_groups = np.split(np.tile(x_positions[:len(x_positions)//4],4),4)
-					global_p_values = np.split(np.array(global_p_values),4)
-					
-				else:
-					global_layer_data_groups = [global_layer_data]
-					x_positions_groups = [x_positions]
-					global_p_values = [global_p_values]
-				
+				ax.boxplot(global_layer_data, whis=float('infinity'), positions=x_positions)
 
-				for g_idx, (g_layer_data, x_pos) in enumerate(zip(global_layer_data_groups, x_positions_groups)):
+				x_tick_positions = [(a + b) / 2 for a, b in zip(x_positions[::2], x_positions[1::2])]
 
-					# create box and whisker plots
-					fig, ax = plt.subplots(
-							figsize=fig_size)
+				x_labels = np.arange(1,len(x_tick_positions)+1)
+				ax.set_xticks(x_tick_positions)
 
-					ax.boxplot(g_layer_data, whis=float('infinity'), positions=x_pos)
+				ax.set_xticklabels([])
+
+				ax.yaxis.set_visible(False)
 	
-					x_tick_positions = [(a + b) / 2 for a, b in zip(x_pos[::2], x_pos[1::2])]
 
-					x_labels = np.arange(1,len(x_tick_positions)+1)
-					ax.set_xticks(x_tick_positions)
+				y_max = np.max([np.max(x) for x in global_layer_data])
+				ax.set_ylim([0,y_max+10])
 
-					ax.set_xticklabels([])
-
-					ax.yaxis.set_visible(False)
-					#ax.xaxis.set_visible(False)
-
+				# place p value strings
+				for i in range(0, len(global_p_values)*2, 2):
+					if global_p_values[i//2] == '':
+						global_p_values[i//2] = 'ns'
+					ax.text((x_positions[i] + x_positions[i+1])/2, y_max+3, global_p_values[i//2], size=sig_font_size, ha='center')
 	
-					y_max = np.max([np.max(x) for x in global_layer_data])
-					ax.set_ylim([0,y_max+10])
 
-					# place p value strings
-					for i in range(0, len(global_p_values[g_idx])*2, 2):
-						if global_p_values[g_idx][i//2] == '':
-							global_p_values[g_idx][i//2] = 'ns'
-						ax.text((x_pos[i] + x_pos[i+1])/2, y_max+3, global_p_values[g_idx][i//2], size=sig_font_size, ha='center')
-		
+				# save figure
+				plt.savefig(join(out_path_layer, f'all_clusters_{fig_size}'))
 
-					plt.savefig(join(out_path_layer, f'all_clusters_{fig_size}_{g_idx}'))
+
 		
 						
 
@@ -2485,8 +2511,16 @@ if __name__ == '__main__':
 	#path_b = '/data/elowsky/OLST/swc_analysis/analysis/mop/pia_white_matter_normalized/swcs/removed_nan_nodes_old/soma_positioned/basal_apical/'
 	#SWC_Analysis.check_if_two_folders_are_same(path_a, path_b)
 
-
 	"""
+	path = '/data/elowsky/OLST/color_test/'
+	a =240
+	b = 10
+
+	fig, ax = plt.subplots()
+	sns.palplot(sns.diverging_palette(a, b,s=100, n=9))
+	plt.savefig(join(path, f'{a}_{b}.png'))
+	"""
+	
 	swc_analysis.logistic_regression(
 			bootstrap=True,
 			bootstrap_samples=10000,
@@ -2500,9 +2534,10 @@ if __name__ == '__main__':
 			save_plot=True,
 			cluster_base_path = join('/data/palmer/consensus_clustering/output_swcs_removed/', region , 'morphometrics'),
 			save_model=False,
-			only_sig_features=False)
-	"""
-
+			only_sig_features=False,
+			layers_to_process=None)
+	
+	
 	#swc_analysis.cluster_morphometrics_statistics()
 	
 	#cluster_path = join('/data/palmer/consensus_clustering/output_swcs_removed/', region , 'morphometrics')
@@ -2524,8 +2559,8 @@ if __name__ == '__main__':
 	#cluster_path = join('/data/palmer/consensus_clustering/output_swcs_removed/', region , 'morphometrics')	
 	#swc_analysis.soma_density_plots(cluster_path)
 	
-	cluster_path = join('/data/palmer/consensus_clustering/output_swcs_removed/', region , 'morphometrics')	
-	swc_analysis.feature_type_pairwise_comparison(cluster_path)
+	#cluster_path = join('/data/palmer/consensus_clustering/output_swcs_removed/', region , 'morphometrics')	
+	#swc_analysis.feature_type_pairwise_comparison(cluster_path)
 	
 
 
